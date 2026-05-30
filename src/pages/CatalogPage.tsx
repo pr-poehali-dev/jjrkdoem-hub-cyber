@@ -9,6 +9,7 @@ type Category = "all" | "key" | "account" | "item" | "game" | "currency";
 interface CatalogPageProps {
   user: User | null;
   onOpenAuth: (mode: "login" | "register") => void;
+  onContact: (seller: string, product: string) => void;
 }
 
 const CATEGORIES: { id: Category; label: string; icon: string }[] = [
@@ -20,7 +21,7 @@ const CATEGORIES: { id: Category; label: string; icon: string }[] = [
   { id: "currency", label: "ВАЛЮТА", icon: "Coins" },
 ];
 
-export default function CatalogPage({ user, onOpenAuth }: CatalogPageProps) {
+export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPageProps) {
   const [category, setCategory] = useState<Category>("all");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"new" | "price_asc" | "price_desc" | "views">("new");
@@ -133,7 +134,7 @@ export default function CatalogPage({ user, onOpenAuth }: CatalogPageProps) {
             <ProductCard
               key={p.id}
               product={p}
-              onContact={() => !user ? onOpenAuth("login") : undefined}
+              onContact={() => !user ? onOpenAuth("login") : onContact(p.seller, p.title)}
             />
           ))}
         </div>

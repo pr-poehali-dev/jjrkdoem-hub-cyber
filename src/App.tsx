@@ -19,6 +19,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [openChatWith, setOpenChatWith] = useState<{ seller: string; product: string } | null>(null);
 
   const openAuth = (mode: "login" | "register" = "login") => {
     setAuthMode(mode);
@@ -40,7 +41,14 @@ export default function App() {
       openAuth("login");
       return;
     }
+    if (p !== "messages") setOpenChatWith(null);
     setPage(p);
+  };
+
+  const openChat = (seller: string, product: string) => {
+    if (!user) { openAuth("login"); return; }
+    setOpenChatWith({ seller, product });
+    setPage("messages");
   };
 
   return (
@@ -59,9 +67,9 @@ export default function App() {
 
         <main className="pt-16">
           {page === "home" && <HomePage onNavigate={navigate} onOpenAuth={openAuth} user={user} />}
-          {page === "catalog" && <CatalogPage user={user} onOpenAuth={openAuth} />}
+          {page === "catalog" && <CatalogPage user={user} onOpenAuth={openAuth} onContact={openChat} />}
           {page === "profile" && user && <ProfilePage user={user} setUser={setUser} />}
-          {page === "messages" && user && <MessagesPage user={user} />}
+          {page === "messages" && user && <MessagesPage user={user} openChatWith={openChatWith} />}
           {page === "favorites" && user && <FavoritesPage />}
           {page === "rules" && <RulesPage />}
           {page === "support" && <SupportPage user={user} />}

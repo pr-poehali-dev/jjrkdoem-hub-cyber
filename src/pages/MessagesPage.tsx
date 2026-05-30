@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/ui/icon";
-import { User, Message } from "../types";
+import { User, Message, Chat } from "../types";
 import { MOCK_CHATS } from "../data/mockData";
 
 interface MessagesPageProps {
   user: User;
+  openChatWith?: { seller: string; product: string } | null;
 }
 
-const INITIAL_MESSAGES: Record<string, Message[]> = {
+type ChatMap = Record<string, Message[]>;
+
+const INITIAL_MESSAGES: ChatMap = {
   "1": [
     { id: "1", from: "CyberTrader_X", text: "Привет! Меня интересует AK-47 Redline, ещё доступен?", time: "14:15", isOwn: false },
     { id: "2", from: "me", text: "Да, доступен! Могу скинуть скриншоты", time: "14:20", isOwn: true },
@@ -18,10 +21,57 @@ const INITIAL_MESSAGES: Record<string, Message[]> = {
   ],
 };
 
-export default function MessagesPage({ user }: MessagesPageProps) {
-  const [activeChat, setActiveChat] = useState<string | null>("1");
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
+export default function MessagesPage({ user, openChatWith }: MessagesPageProps) {
+  const [chats, setChats] = useState<Chat[]>(MOCK_CHATS);
+  const [messages, setMessages] = useState<ChatMap>(INITIAL_MESSAGES);
+  const [activeChat, setActiveChat] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // При переходе "Написать продавцу" — находим или создаём чат
+  useEffect(() => {
+    if (!openChatWith) {
+      setActiveChat(chats[0]?.id ?? null);
+      return;
+    }
+
+    const { seller, product } = openChatWith;
+
+    // Ищем существующий чат с этим продавцом
+    const existing = chats.find((c) => c.username === seller);
+    if (existing) {
+      setActiveChat(existing.id);
+      return;
+    }
+
+    // Создаём новый чат
+    const newId = `new_${Date.now()}`;
+    const newChat: Chat = {
+      id: newId,
+      username: seller,
+      avatar: "",
+      lastMessage: "",
+      time: "Сейчас",
+      unread: 0,
+      product,
+    };
+    const greeting: Message = {
+      id: "greet_1",
+      from: user.username,
+      text: `Привет! Меня интересует твой товар: ${product}`,
+      time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
+      isOwn: true,
+    };
+
+    setChats((prev) => [newChat, ...prev]);
+    setMessages((prev) => ({ ...prev, [newId]: [greeting] }));
+    setActiveChat(newId);
+  }, [openChatWith]);
+
+  // Скролл вниз при новых сообщениях
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, activeChat]);
 
   const sendMessage = () => {
     if (!input.trim() || !activeChat) return;
@@ -36,10 +86,15 @@ export default function MessagesPage({ user }: MessagesPageProps) {
       ...prev,
       [activeChat]: [...(prev[activeChat] || []), msg],
     }));
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === activeChat ? { ...c, lastMessage: msg.text, time: msg.time } : c
+      )
+    );
     setInput("");
   };
 
-  const activeChatData = MOCK_CHATS.find((c) => c.id === activeChat);
+  const activeChatData = chats.find((c) => c.id === activeChat);
   const chatMessages = activeChat ? (messages[activeChat] || []) : [];
 
   return (
@@ -58,22 +113,24 @@ export default function MessagesPage({ user }: MessagesPageProps) {
           minHeight: "400px",
         }}
       >
-        {/* Sidebar — Chats List */}
+        {/* Sidebar */}
         <div
           className="w-72 flex-shrink-0 flex flex-col"
           style={{ borderRight: "1px solid rgba(0,245,255,0.1)" }}
         >
-          <div
-            className="p-4"
-            style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}
-          >
+          <div className="p-4" style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}>
             <h2 className="font-orbitron font-bold text-sm" style={{ color: "var(--neon-cyan)" }}>
               ДИАЛОГИ
             </h2>
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {MOCK_CHATS.map((chat) => (
+            {chats.length === 0 && (
+              <div className="p-6 text-center font-rajdhani text-sm" style={{ color: "rgba(0,245,255,0.3)" }}>
+                Нет диалогов
+              </div>
+            )}
+            {chats.map((chat) => (
               <button
                 key={chat.id}
                 onClick={() => setActiveChat(chat.id)}
@@ -105,12 +162,12 @@ export default function MessagesPage({ user }: MessagesPageProps) {
                       </span>
                     </div>
                     {chat.product && (
-                      <div className="font-mono text-xs truncate mb-1" style={{ color: "rgba(0,245,255,0.35)" }}>
+                      <div className="font-mono text-xs truncate mb-0.5" style={{ color: "rgba(0,245,255,0.35)" }}>
                         📦 {chat.product}
                       </div>
                     )}
                     <p className="font-rajdhani text-xs truncate" style={{ color: "rgba(255,255,255,0.35)" }}>
-                      {chat.lastMessage}
+                      {chat.lastMessage || "Новый диалог"}
                     </p>
                   </div>
                   {chat.unread > 0 && (
@@ -130,11 +187,8 @@ export default function MessagesPage({ user }: MessagesPageProps) {
         {/* Chat area */}
         {activeChatData ? (
           <div className="flex-1 flex flex-col min-w-0">
-            {/* Chat header */}
-            <div
-              className="flex items-center gap-3 p-4"
-              style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}
-            >
+            {/* Header */}
+            <div className="flex items-center gap-3 p-4" style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}>
               <div
                 className="w-8 h-8 flex items-center justify-center font-orbitron font-bold text-sm"
                 style={{ background: "rgba(0,245,255,0.1)", border: "1px solid rgba(0,245,255,0.2)", color: "var(--neon-cyan)" }}
@@ -147,22 +201,19 @@ export default function MessagesPage({ user }: MessagesPageProps) {
                 </div>
                 {activeChatData.product && (
                   <div className="font-mono text-xs" style={{ color: "rgba(0,245,255,0.4)" }}>
-                    Сделка: {activeChatData.product}
+                    📦 {activeChatData.product}
                   </div>
                 )}
               </div>
-              <div className="ml-auto">
-                <div
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs font-mono"
-                  style={{ border: "1px solid rgba(0,255,100,0.3)", color: "#00ff88" }}
-                >
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                  ОНЛАЙН
-                </div>
+              <div className="ml-auto flex items-center gap-1.5 px-2 py-1 text-xs font-mono"
+                style={{ border: "1px solid rgba(0,255,100,0.3)", color: "#00ff88" }}
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                ОНЛАЙН
               </div>
             </div>
 
-            {/* Info banner */}
+            {/* Banner */}
             <div
               className="mx-4 mt-3 p-2.5 text-xs font-rajdhani"
               style={{
@@ -184,9 +235,7 @@ export default function MessagesPage({ user }: MessagesPageProps) {
                   <div
                     className="max-w-xs md:max-w-md px-3 py-2"
                     style={{
-                      background: msg.isOwn
-                        ? "rgba(0,245,255,0.1)"
-                        : "rgba(255,255,255,0.04)",
+                      background: msg.isOwn ? "rgba(0,245,255,0.1)" : "rgba(255,255,255,0.04)",
                       border: `1px solid ${msg.isOwn ? "rgba(0,245,255,0.2)" : "rgba(255,255,255,0.08)"}`,
                     }}
                   >
@@ -204,13 +253,11 @@ export default function MessagesPage({ user }: MessagesPageProps) {
                   </div>
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
-            <div
-              className="p-4 flex gap-3"
-              style={{ borderTop: "1px solid rgba(0,245,255,0.1)" }}
-            >
+            <div className="p-4 flex gap-3" style={{ borderTop: "1px solid rgba(0,245,255,0.1)" }}>
               <input
                 className="cyber-input flex-1"
                 placeholder="Введите сообщение..."
