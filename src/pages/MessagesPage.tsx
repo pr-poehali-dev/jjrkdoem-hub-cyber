@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/ui/icon";
 import { User, Message, Chat } from "../types";
-import { MOCK_CHATS } from "../data/mockData";
 
 interface MessagesPageProps {
   user: User;
@@ -10,19 +9,10 @@ interface MessagesPageProps {
 
 type ChatMap = Record<string, Message[]>;
 
-const INITIAL_MESSAGES: ChatMap = {
-  "1": [
-    { id: "1", from: "CyberTrader_X", text: "Привет! Меня интересует AK-47 Redline, ещё доступен?", time: "14:15", isOwn: false },
-    { id: "2", from: "me", text: "Да, доступен! Могу скинуть скриншоты", time: "14:20", isOwn: true },
-    { id: "3", from: "CyberTrader_X", text: "Готов к сделке, пишите детали", time: "14:32", isOwn: false },
-  ],
-  "2": [
-    { id: "1", from: "NeonDealer", text: "Аккаунт ещё доступен", time: "Вчера", isOwn: false },
-  ],
-};
+const INITIAL_MESSAGES: ChatMap = {};
 
 export default function MessagesPage({ user, openChatWith }: MessagesPageProps) {
-  const [chats, setChats] = useState<Chat[]>(MOCK_CHATS);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<ChatMap>(INITIAL_MESSAGES);
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -35,20 +25,25 @@ export default function MessagesPage({ user, openChatWith }: MessagesPageProps) 
       return;
     }
 
-    const { seller, product } = openChatWith;
+    const { product } = openChatWith;
+    const adminName = "ADMINISTRATOR CONSOLE";
 
-    // Ищем существующий чат с этим продавцом
-    const existing = chats.find((c) => c.username === seller);
+    // Ищем существующий чат с админом
+    const existing = chats.find((c) => c.username === adminName);
     if (existing) {
+      // Обновляем товар в чате если другой
+      setChats((prev) =>
+        prev.map((c) => c.username === adminName ? { ...c, product } : c)
+      );
       setActiveChat(existing.id);
       return;
     }
 
-    // Создаём новый чат
+    // Создаём новый чат с ADMINISTRATOR CONSOLE
     const newId = `new_${Date.now()}`;
     const newChat: Chat = {
       id: newId,
-      username: seller,
+      username: adminName,
       avatar: "",
       lastMessage: "",
       time: "Сейчас",
