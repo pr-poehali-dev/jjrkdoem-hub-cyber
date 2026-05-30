@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/ui/icon";
 import ProductCard from "../components/ProductCard";
 import { Product, User } from "../types";
@@ -37,7 +37,13 @@ const emptyForm = {
   price: "",
   category: "key" as Product["category"],
   game: "",
+  videoUrl: "",
 };
+
+function getYoutubeId(url: string): string | null {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
+  return match ? match[1] : null;
+}
 
 export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPageProps) {
   const [products, setProducts] = useState<Product[]>(loadProducts);
@@ -46,13 +52,27 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
   const [sortBy, setSortBy] = useState<"new" | "price_asc" | "price_desc" | "views">("new");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [formImages, setFormImages] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isAdmin = user?.isAdmin === true;
 
-  useEffect(() => {
-    saveProducts(products);
-  }, [products]);
+  useEffect(() => { saveProducts(products); }, [products]);
+
+  const handleFileChange = (files: FileList | null) => {
+    if (!files) return;
+    Array.from(files).slice(0, 5 - formImages.length).forEach((file) => {
+      if (!file.type.startsWith("image/")) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        setFormImages((prev) => [...prev, result].slice(0, 5));
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   const filtered = products
     .filter((p) => category === "all" || p.category === category)
@@ -84,13 +104,16 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
       game: form.game.trim(),
       seller: "ADMINISTRATOR CONSOLE",
       sellerVerified: true,
-      image: "",
+      image: formImages[0] || "",
+      images: formImages,
+      videoUrl: form.videoUrl.trim(),
       views: 0,
       createdAt: new Date().toISOString().split("T")[0],
     };
 
     setProducts((prev) => [newProduct, ...prev]);
     setForm(emptyForm);
+    setFormImages([]);
     setShowForm(false);
   };
 
@@ -106,9 +129,7 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
           <div className="w-6 h-px" style={{ background: "var(--neon-cyan)" }} />
           <span className="font-mono text-xs" style={{ color: "rgba(0,245,255,0.4)" }}>// MARKETPLACE.CATALOG</span>
         </div>
-        <h1 className="font-orbitron font-black text-2xl md:text-3xl" style={{ color: "var(--neon-cyan)" }}>
-          КАТАЛОГ
-        </h1>
+        <h1 className="font-orbitron font-black text-2xl md:text-3xl" style={{ color: "var(--neon-cyan)" }}>КАТАЛОГ</h1>
       </div>
 
       {/* Search + Sort */}
@@ -145,16 +166,14 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
         ))}
       </div>
 
-      {/* Results count + Admin button */}
+      {/* Results + Admin btn */}
       <div className="flex items-center justify-between mb-4">
         <span className="font-mono text-xs" style={{ color: "rgba(0,245,255,0.4)" }}>
           НАЙДЕНО: <span style={{ color: "var(--neon-cyan)" }}>{filtered.length}</span> ЛОТОВ
         </span>
         {isAdmin && (
-          <button
-            className="cyber-btn cyber-btn-purple text-xs py-1.5 px-3"
-            onClick={() => { setShowForm(!showForm); setFormError(""); }}
-          >
+          <button className="cyber-btn cyber-btn-purple text-xs py-1.5 px-3"
+            onClick={() => { setShowForm(!showForm); setFormError(""); setFormImages([]); }}>
             <span className="flex items-center gap-1.5">
               <Icon name={showForm ? "X" : "Plus"} size={12} />
               {showForm ? "ОТМЕНА" : "ДОБАВИТЬ ЛОТ"}
@@ -163,20 +182,14 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
         )}
       </div>
 
-      {/* Admin Add Form */}
+      {/* ===== ADMIN FORM ===== */}
       {isAdmin && showForm && (
-        <div
-          className="mb-8 p-5 animate-fade-in"
-          style={{
-            background: "rgba(191,0,255,0.04)",
-            border: "1px solid rgba(191,0,255,0.3)",
-          }}
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Icon name="Plus" size={16} style={{ color: "var(--neon-purple)" }} />
-            <h3 className="font-orbitron font-bold text-sm" style={{ color: "var(--neon-purple)" }}>
-              НОВЫЙ ЛОТ
-            </h3>
+        <div className="mb-8 p-6 animate-fade-in"
+          style={{ background: "rgba(191,0,255,0.04)", border: "1px solid rgba(191,0,255,0.3)" }}>
+
+          <div className="flex items-center gap-2 mb-6">
+            <Icon name="PackagePlus" size={18} style={{ color: "var(--neon-purple)" }} />
+            <h3 className="font-orbitron font-bold text-base" style={{ color: "var(--neon-purple)" }}>НОВЫЙ ЛОТ</h3>
           </div>
 
           <div className="grid sm:grid-cols-2 gap-4 mb-4">
@@ -210,9 +223,79 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
 
           <div className="mb-4">
             <label className="block text-xs font-mono mb-1.5" style={{ color: "rgba(191,0,255,0.6)" }}>ОПИСАНИЕ *</label>
-            <textarea className="cyber-input resize-none" rows={3}
-              placeholder="Подробно опиши товар, условия продажи..."
+            <textarea className="cyber-input resize-none" rows={4}
+              placeholder="Подробно опиши товар, условия продажи, что входит в комплект..."
               value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </div>
+
+          {/* Photo Upload */}
+          <div className="mb-4">
+            <label className="block text-xs font-mono mb-1.5" style={{ color: "rgba(191,0,255,0.6)" }}>
+              ФОТО (до 5 штук)
+            </label>
+            <div
+              className="border-2 border-dashed p-6 text-center cursor-pointer transition-all"
+              style={{
+                borderColor: dragOver ? "var(--neon-purple)" : "rgba(191,0,255,0.25)",
+                background: dragOver ? "rgba(191,0,255,0.08)" : "rgba(191,0,255,0.02)",
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFileChange(e.dataTransfer.files); }}
+            >
+              <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+                onChange={(e) => handleFileChange(e.target.files)} />
+              <Icon name="ImagePlus" size={28} className="mx-auto mb-2"
+                style={{ color: "rgba(191,0,255,0.5)" } as React.CSSProperties} />
+              <p className="font-rajdhani text-sm" style={{ color: "rgba(191,0,255,0.5)" }}>
+                Перетащи фото сюда или нажми для выбора
+              </p>
+              <p className="font-mono text-xs mt-1" style={{ color: "rgba(191,0,255,0.3)" }}>JPG, PNG, WEBP</p>
+            </div>
+
+            {formImages.length > 0 && (
+              <div className="flex gap-2 mt-3 flex-wrap">
+                {formImages.map((img, i) => (
+                  <div key={i} className="relative group">
+                    <img src={img} alt="" className="w-20 h-20 object-cover"
+                      style={{ border: "1px solid rgba(191,0,255,0.3)" }} />
+                    <button
+                      onClick={() => setFormImages((prev) => prev.filter((_, idx) => idx !== i))}
+                      className="absolute top-0.5 right-0.5 w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{ background: "rgba(255,0,60,0.85)" }}>
+                      <Icon name="X" size={10} style={{ color: "#fff" }} />
+                    </button>
+                    {i === 0 && (
+                      <div className="absolute bottom-0 left-0 right-0 text-center py-0.5"
+                        style={{ background: "rgba(0,0,0,0.75)", fontSize: "9px", color: "var(--neon-cyan)", fontFamily: "monospace" }}>
+                        ОБЛОЖКА
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Video URL */}
+          <div className="mb-6">
+            <label className="block text-xs font-mono mb-1.5" style={{ color: "rgba(191,0,255,0.6)" }}>
+              ВИДЕО — ссылка YouTube (необязательно)
+            </label>
+            <div className="relative">
+              <Icon name="Youtube" size={16} className="absolute left-3 top-1/2 -translate-y-1/2"
+                style={{ color: "rgba(191,0,255,0.4)" } as React.CSSProperties} />
+              <input className="cyber-input pl-9"
+                placeholder="https://youtube.com/watch?v=... или https://youtu.be/..."
+                value={form.videoUrl} onChange={(e) => setForm({ ...form, videoUrl: e.target.value })} />
+            </div>
+            {form.videoUrl && getYoutubeId(form.videoUrl) && (
+              <p className="mt-1.5 font-mono text-xs" style={{ color: "#00ff88" }}>✓ Видео найдено</p>
+            )}
+            {form.videoUrl && !getYoutubeId(form.videoUrl) && (
+              <p className="mt-1.5 font-mono text-xs" style={{ color: "#ff9500" }}>⚠ Вставь ссылку YouTube</p>
+            )}
           </div>
 
           {formError && (
@@ -222,7 +305,7 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
             </div>
           )}
 
-          <button onClick={handleAdd} className="cyber-btn cyber-btn-filled px-6 py-2">
+          <button onClick={handleAdd} className="cyber-btn cyber-btn-filled px-8 py-2.5">
             <span className="flex items-center gap-2">
               <Icon name="Check" size={14} />
               ОПУБЛИКОВАТЬ ЛОТ
@@ -254,16 +337,10 @@ export default function CatalogPage({ user, onOpenAuth, onContact }: CatalogPage
                 onContact={() => !user ? onOpenAuth("login") : onContact(p.seller, p.title)}
               />
               {isAdmin && (
-                <button
-                  onClick={() => handleDelete(p.id)}
+                <button onClick={() => handleDelete(p.id)}
                   className="absolute top-2 right-8 p-1.5 transition-all z-10"
-                  style={{
-                    background: "rgba(255,0,60,0.15)",
-                    border: "1px solid rgba(255,0,60,0.4)",
-                    color: "#ff3c3c",
-                  }}
-                  title="Удалить лот"
-                >
+                  style={{ background: "rgba(255,0,60,0.15)", border: "1px solid rgba(255,0,60,0.4)", color: "#ff3c3c" }}
+                  title="Удалить лот">
                   <Icon name="Trash2" size={13} />
                 </button>
               )}

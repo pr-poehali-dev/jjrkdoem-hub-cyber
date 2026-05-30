@@ -22,6 +22,8 @@ export interface Product {
   seller: string;
   sellerVerified: boolean;
   image: string;
+  images: string[];
+  videoUrl: string;
   isFavorite?: boolean;
   views: number;
   createdAt: string;
