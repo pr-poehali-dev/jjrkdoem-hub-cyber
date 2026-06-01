@@ -32,6 +32,7 @@ export interface Product {
 export interface Message {
   id: string;
   from: string;
+  to: string;
   text: string;
   time: string;
   isOwn: boolean;

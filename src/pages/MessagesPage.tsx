@@ -9,110 +9,203 @@ interface MessagesPageProps {
 
 type ChatMap = Record<string, Message[]>;
 
-const INITIAL_MESSAGES: ChatMap = {};
+// ── storage helpers ──────────────────────────────────────────────────────────
+// ID чата всегда строится из двух имён в алфавитном порядке, чтобы
+// "userA↔ADMIN" и "ADMIN↔userA" давали одинаковый ключ
+function chatId(a: string, b: string) {
+  return [a, b].sort().join("__");
+}
+
+const ADMIN = "ADMINISTRATOR CONSOLE";
+
+function storageKey(username: string) {
+  return `hub_chats_v2__${username}`;
+}
+
+function loadChats(username: string): Chat[] {
+  try { return JSON.parse(localStorage.getItem(storageKey(username)) || "[]"); }
+  catch { return []; }
+}
+
+function saveChats(username: string, chats: Chat[]) {
+  localStorage.setItem(storageKey(username), JSON.stringify(chats));
+}
+
+function loadMessages(): ChatMap {
+  try { return JSON.parse(localStorage.getItem("hub_messages_v2") || "{}"); }
+  catch { return {}; }
+}
+
+function saveMessages(map: ChatMap) {
+  localStorage.setItem("hub_messages_v2", JSON.stringify(map));
+}
+
+// Обновить запись чата у конкретного участника
+function upsertChat(username: string, chat: Chat) {
+  const list = loadChats(username);
+  const idx = list.findIndex((c) => c.id === chat.id);
+  if (idx >= 0) { list[idx] = { ...list[idx], ...chat }; }
+  else { list.unshift(chat); }
+  saveChats(username, list);
+}
 
 export default function MessagesPage({ user, openChatWith }: MessagesPageProps) {
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [messages, setMessages] = useState<ChatMap>(INITIAL_MESSAGES);
+  const [chats, setChats] = useState<Chat[]>(() => loadChats(user.username));
+  const [messages, setMessages] = useState<ChatMap>(loadMessages);
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevOpenChatWith = useRef<typeof openChatWith>(null);
 
-  // При переходе "Написать продавцу" — находим или создаём чат
+  // При смене пользователя — перезагружаем его чаты
   useEffect(() => {
-    if (!openChatWith) {
-      setActiveChat(chats[0]?.id ?? null);
-      return;
-    }
+    setChats(loadChats(user.username));
+    setActiveChat(null);
+  }, [user.username]);
+
+  // Открыть / создать чат по нажатию "Написать продавцу"
+  useEffect(() => {
+    if (!openChatWith || openChatWith === prevOpenChatWith.current) return;
+    prevOpenChatWith.current = openChatWith;
 
     const { product } = openChatWith;
-    const adminName = "ADMINISTRATOR CONSOLE";
+    const cid = chatId(user.username, ADMIN);
 
-    // Ищем существующий чат с админом
-    const existing = chats.find((c) => c.username === adminName);
-    if (existing) {
-      // Обновляем товар в чате если другой
-      setChats((prev) =>
-        prev.map((c) => c.username === adminName ? { ...c, product } : c)
-      );
-      setActiveChat(existing.id);
-      return;
-    }
-
-    // Создаём новый чат с ADMINISTRATOR CONSOLE
-    const newId = `new_${Date.now()}`;
-    const newChat: Chat = {
-      id: newId,
-      username: adminName,
+    // Обновляем данные о товаре в чате (у обоих участников)
+    const updatedChat: Chat = {
+      id: cid,
+      username: user.isAdmin ? user.username : ADMIN,
       avatar: "",
-      lastMessage: "",
-      time: "Сейчас",
+      lastMessage: loadMessages()[cid]?.at(-1)?.text || "",
+      time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
       unread: 0,
       product,
     };
-    const greeting: Message = {
-      id: "greet_1",
-      from: user.username,
-      text: `Привет! Меня интересует твой товар: ${product}`,
-      time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
-      isOwn: true,
-    };
+    upsertChat(user.username, updatedChat);
+    upsertChat(ADMIN, { ...updatedChat, username: user.username });
 
-    setChats((prev) => [newChat, ...prev]);
-    setMessages((prev) => ({ ...prev, [newId]: [greeting] }));
-    setActiveChat(newId);
+    const existing = loadMessages()[cid];
+    if (!existing || existing.length === 0) {
+      // Первый раз — добавляем автоприветствие
+      const greeting: Message = {
+        id: `greet_${Date.now()}`,
+        from: user.username,
+        to: ADMIN,
+        text: `Привет! Меня интересует твой товар: ${product}`,
+        time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
+        isOwn: true,
+      };
+      const updated = { ...loadMessages(), [cid]: [greeting] };
+      saveMessages(updated);
+      setMessages(updated);
+    }
+
+    setChats(loadChats(user.username));
+    setActiveChat(cid);
   }, [openChatWith]);
 
-  // Скролл вниз при новых сообщениях
+  // Сохранять сообщения при каждом изменении
+  useEffect(() => {
+    saveMessages(messages);
+  }, [messages]);
+
+  // Скролл вниз
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeChat]);
 
+  // Пометить чат прочитанным при открытии
+  useEffect(() => {
+    if (!activeChat) return;
+    setChats((prev) => {
+      const updated = prev.map((c) => c.id === activeChat ? { ...c, unread: 0 } : c);
+      saveChats(user.username, updated);
+      return updated;
+    });
+  }, [activeChat]);
+
   const sendMessage = () => {
     if (!input.trim() || !activeChat) return;
+    const now = new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+
+    // Определяем собеседника
+    const activeChatData = chats.find((c) => c.id === activeChat);
+    const partner = activeChatData?.username || "";
+
     const msg: Message = {
       id: Date.now().toString(),
       from: user.username,
+      to: partner,
       text: input.trim(),
-      time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
+      time: now,
       isOwn: true,
     };
-    setMessages((prev) => ({
-      ...prev,
-      [activeChat]: [...(prev[activeChat] || []), msg],
-    }));
-    setChats((prev) =>
-      prev.map((c) =>
-        c.id === activeChat ? { ...c, lastMessage: msg.text, time: msg.time } : c
-      )
+
+    // Добавляем в общий map сообщений
+    const newMessages = {
+      ...messages,
+      [activeChat]: [...(messages[activeChat] || []), msg],
+    };
+    setMessages(newMessages);
+    saveMessages(newMessages);
+
+    // Обновляем список чатов у себя
+    const myChats = chats.map((c) =>
+      c.id === activeChat ? { ...c, lastMessage: msg.text, time: now, unread: 0 } : c
     );
+    setChats(myChats);
+    saveChats(user.username, myChats);
+
+    // Обновляем список чатов у собеседника (+1 непрочитанное)
+    const partnerChats = loadChats(partner);
+    const partnerChatIdx = partnerChats.findIndex((c) => c.id === activeChat);
+    const partnerEntry: Chat = {
+      id: activeChat,
+      username: user.username,
+      avatar: "",
+      lastMessage: msg.text,
+      time: now,
+      unread: partnerChatIdx >= 0 ? (partnerChats[partnerChatIdx].unread || 0) + 1 : 1,
+      product: activeChatData?.product,
+    };
+    upsertChat(partner, partnerEntry);
+
     setInput("");
   };
 
+  // Получить сообщения активного чата с правильным флагом isOwn
   const activeChatData = chats.find((c) => c.id === activeChat);
-  const chatMessages = activeChat ? (messages[activeChat] || []) : [];
+  const chatMessages = (activeChat ? (messages[activeChat] || []) : []).map((m) => ({
+    ...m,
+    isOwn: m.from === user.username,
+  }));
+
+  const totalUnread = chats.reduce((s, c) => s + (c.unread || 0), 0);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-6 h-px" style={{ background: "var(--neon-cyan)" }} />
         <span className="font-mono text-xs" style={{ color: "rgba(0,245,255,0.4)" }}>// USER.MESSAGES</span>
+        {totalUnread > 0 && (
+          <span className="font-mono text-xs px-2 py-0.5"
+            style={{ background: "var(--neon-cyan)", color: "#000", fontWeight: 700 }}>
+            {totalUnread} NEW
+          </span>
+        )}
       </div>
 
-      <div
-        className="flex overflow-hidden"
+      <div className="flex overflow-hidden"
         style={{
           border: "1px solid rgba(0,245,255,0.2)",
           background: "var(--dark-card)",
           height: "calc(100vh - 220px)",
           minHeight: "400px",
-        }}
-      >
-        {/* Sidebar */}
-        <div
-          className="w-72 flex-shrink-0 flex flex-col"
-          style={{ borderRight: "1px solid rgba(0,245,255,0.1)" }}
-        >
+        }}>
+
+        {/* ── Sidebar ── */}
+        <div className="w-72 flex-shrink-0 flex flex-col"
+          style={{ borderRight: "1px solid rgba(0,245,255,0.1)" }}>
           <div className="p-4" style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}>
             <h2 className="font-orbitron font-bold text-sm" style={{ color: "var(--neon-cyan)" }}>
               ДИАЛОГИ
@@ -126,50 +219,43 @@ export default function MessagesPage({ user, openChatWith }: MessagesPageProps) 
               </div>
             )}
             {chats.map((chat) => (
-              <button
-                key={chat.id}
-                onClick={() => setActiveChat(chat.id)}
+              <button key={chat.id} onClick={() => setActiveChat(chat.id)}
                 className="w-full text-left p-4 transition-all"
                 style={{
                   background: activeChat === chat.id ? "rgba(0,245,255,0.06)" : "transparent",
                   borderLeft: activeChat === chat.id ? "2px solid var(--neon-cyan)" : "2px solid transparent",
                   borderBottom: "1px solid rgba(0,245,255,0.05)",
-                }}
-              >
+                }}>
                 <div className="flex items-start gap-3">
-                  <div
-                    className="w-9 h-9 flex-shrink-0 flex items-center justify-center font-orbitron font-bold text-sm"
-                    style={{
-                      background: "rgba(0,245,255,0.1)",
-                      border: "1px solid rgba(0,245,255,0.2)",
-                      color: "var(--neon-cyan)",
-                    }}
-                  >
+                  <div className="w-9 h-9 flex-shrink-0 flex items-center justify-center font-orbitron font-bold text-sm"
+                    style={{ background: "rgba(0,245,255,0.1)", border: "1px solid rgba(0,245,255,0.2)", color: "var(--neon-cyan)" }}>
                     {chat.username[0]}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <span className="font-rajdhani font-semibold text-sm truncate" style={{ color: "rgba(255,255,255,0.85)" }}>
+                      <span className="font-rajdhani font-semibold text-sm truncate"
+                        style={{ color: "rgba(255,255,255,0.85)" }}>
                         {chat.username}
                       </span>
-                      <span className="font-mono text-xs flex-shrink-0 ml-2" style={{ color: "rgba(0,245,255,0.3)" }}>
+                      <span className="font-mono text-xs flex-shrink-0 ml-2"
+                        style={{ color: "rgba(0,245,255,0.3)" }}>
                         {chat.time}
                       </span>
                     </div>
                     {chat.product && (
-                      <div className="font-mono text-xs truncate mb-0.5" style={{ color: "rgba(0,245,255,0.35)" }}>
+                      <div className="font-mono text-xs truncate mb-0.5"
+                        style={{ color: "rgba(0,245,255,0.35)" }}>
                         📦 {chat.product}
                       </div>
                     )}
-                    <p className="font-rajdhani text-xs truncate" style={{ color: "rgba(255,255,255,0.35)" }}>
+                    <p className="font-rajdhani text-xs truncate"
+                      style={{ color: "rgba(255,255,255,0.35)" }}>
                       {chat.lastMessage || "Новый диалог"}
                     </p>
                   </div>
-                  {chat.unread > 0 && (
-                    <div
-                      className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-xs font-bold"
-                      style={{ background: "var(--neon-cyan)", color: "#000", borderRadius: "50%" }}
-                    >
+                  {(chat.unread || 0) > 0 && (
+                    <div className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-xs font-bold"
+                      style={{ background: "var(--neon-cyan)", color: "#000", borderRadius: "50%" }}>
                       {chat.unread}
                     </div>
                   )}
@@ -179,15 +265,14 @@ export default function MessagesPage({ user, openChatWith }: MessagesPageProps) 
           </div>
         </div>
 
-        {/* Chat area */}
+        {/* ── Chat area ── */}
         {activeChatData ? (
           <div className="flex-1 flex flex-col min-w-0">
             {/* Header */}
-            <div className="flex items-center gap-3 p-4" style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}>
-              <div
-                className="w-8 h-8 flex items-center justify-center font-orbitron font-bold text-sm"
-                style={{ background: "rgba(0,245,255,0.1)", border: "1px solid rgba(0,245,255,0.2)", color: "var(--neon-cyan)" }}
-              >
+            <div className="flex items-center gap-3 p-4"
+              style={{ borderBottom: "1px solid rgba(0,245,255,0.1)" }}>
+              <div className="w-8 h-8 flex items-center justify-center font-orbitron font-bold text-sm"
+                style={{ background: "rgba(0,245,255,0.1)", border: "1px solid rgba(0,245,255,0.2)", color: "var(--neon-cyan)" }}>
                 {activeChatData.username[0]}
               </div>
               <div>
@@ -201,39 +286,34 @@ export default function MessagesPage({ user, openChatWith }: MessagesPageProps) 
                 )}
               </div>
               <div className="ml-auto flex items-center gap-1.5 px-2 py-1 text-xs font-mono"
-                style={{ border: "1px solid rgba(0,255,100,0.3)", color: "#00ff88" }}
-              >
+                style={{ border: "1px solid rgba(0,255,100,0.3)", color: "#00ff88" }}>
                 <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
                 ОНЛАЙН
               </div>
             </div>
 
             {/* Banner */}
-            <div
-              className="mx-4 mt-3 p-2.5 text-xs font-rajdhani"
-              style={{
-                background: "rgba(191,0,255,0.06)",
-                border: "1px solid rgba(191,0,255,0.2)",
-                color: "rgba(191,0,255,0.7)",
-              }}
-            >
+            <div className="mx-4 mt-3 p-2.5 text-xs font-rajdhani"
+              style={{ background: "rgba(191,0,255,0.06)", border: "1px solid rgba(191,0,255,0.2)", color: "rgba(191,0,255,0.7)" }}>
               💬 Оплата происходит напрямую с продавцом. Уточняйте все условия в чате перед сделкой.
             </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {chatMessages.length === 0 && (
+                <div className="text-center py-12 font-rajdhani text-sm"
+                  style={{ color: "rgba(0,245,255,0.2)" }}>
+                  Начните переписку
+                </div>
+              )}
               {chatMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.isOwn ? "justify-end" : "justify-start"} animate-fade-in`}
-                >
-                  <div
-                    className="max-w-xs md:max-w-md px-3 py-2"
+                <div key={msg.id}
+                  className={`flex ${msg.isOwn ? "justify-end" : "justify-start"} animate-fade-in`}>
+                  <div className="max-w-xs md:max-w-md px-3 py-2"
                     style={{
                       background: msg.isOwn ? "rgba(0,245,255,0.1)" : "rgba(255,255,255,0.04)",
                       border: `1px solid ${msg.isOwn ? "rgba(0,245,255,0.2)" : "rgba(255,255,255,0.08)"}`,
-                    }}
-                  >
+                    }}>
                     {!msg.isOwn && (
                       <div className="font-mono text-xs mb-1" style={{ color: "rgba(0,245,255,0.5)" }}>
                         {msg.from}
@@ -253,18 +333,13 @@ export default function MessagesPage({ user, openChatWith }: MessagesPageProps) 
 
             {/* Input */}
             <div className="p-4 flex gap-3" style={{ borderTop: "1px solid rgba(0,245,255,0.1)" }}>
-              <input
-                className="cyber-input flex-1"
+              <input className="cyber-input flex-1"
                 placeholder="Введите сообщение..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              />
-              <button
-                onClick={sendMessage}
-                className="cyber-btn cyber-btn-filled px-4 py-2"
-                disabled={!input.trim()}
-              >
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()} />
+              <button onClick={sendMessage} className="cyber-btn cyber-btn-filled px-4 py-2"
+                disabled={!input.trim()}>
                 <Icon name="Send" size={16} />
               </button>
             </div>
@@ -272,7 +347,8 @@ export default function MessagesPage({ user, openChatWith }: MessagesPageProps) 
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <Icon name="MessageSquare" size={48} className="mx-auto mb-4" style={{ color: "rgba(0,245,255,0.15)" } as React.CSSProperties} />
+              <Icon name="MessageSquare" size={48} className="mx-auto mb-4"
+                style={{ color: "rgba(0,245,255,0.15)" } as React.CSSProperties} />
               <p className="font-orbitron text-sm" style={{ color: "rgba(0,245,255,0.3)" }}>
                 ВЫБЕРИТЕ ДИАЛОГ
               </p>
